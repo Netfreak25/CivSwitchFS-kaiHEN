@@ -15,7 +15,6 @@
 
 import coreRuntime from "../src/core/runtime.mjs";
 import {cmifSend} from "../src/kaihen/wire.mjs";
-import {u64Bytes} from "../src/kaihen/state.mjs";
 import {sha256} from "../src/kaihen/sha256.mjs";
 
 const {
@@ -66,12 +65,14 @@ function saveOpenDirectory(save, path, mode) {
 function saveReadDirectory(dirHandle, maxEntries) {
     const buf = allocPage(0x310 * maxEntries);
     const pkt = allocPage(0x2000);
-    // Same shape as the proven IFile::Read (sdReadFileChunk): u64
-    // input, one B map-alias buffer, static out = u64 count.
+    // switchbrew IDirectory::Read: takes ONLY a type-0x6 output buffer
+    // (the entry cap is the buffer size, no raw input) and returns a
+    // static u64 count followed by FsDirectoryEntry[cap] in the
+    // buffer. Sending a raw count input errored pre-handler at FS and
+    // closed the session (dispatcher 0x25A0B then bare 0xF601).
     const entryBytes = 0x310 * maxEntries;
     const reply = cmifSend(dirHandle, {
         pkt, cmd: 0,
-        input: u64Bytes(BigInt(maxEntries)),
         b: [{addr: buf, size: entryBytes}]
     });
     if (reply.transport !== 0 || reply.result === undefined ||
