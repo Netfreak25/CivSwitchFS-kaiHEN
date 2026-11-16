@@ -551,17 +551,24 @@ export async function run() {
         throw error;
     } finally {
         // Retire the IStorage cache alias so stale heap pointers don't
-        // persist in the BC save.  Every writeFs call during the chain
-        // wrote heap-targeted bytes into the save via write-through;
-        // intermediate commits (donor, cleanupDonor) flushed them.
-        // Writing retirement bytes at offset 0 neutralises the cache
-        // entry, and a final commit ensures the save carries those
-        // neutral bytes instead of the stale ones.
+        // persist in the BC save.  Every ipcStorageWrite has a dual
+        // effect (Nerisma): it modifies fsp-srv's heap through the
+        // aliased cache (intended) AND write-throughs the same bytes
+        // into the raw save partition (mandatory, ideally reverted
+        // before the commit).  The aliased offset-0 head is the owned
+        // array's {count, entrySize} — canonical pristine state
+        // {0, 0x4000} per armEndpoint's adoption check — so restoring
+        // the canonical head does both halves at once: heap-side the
+        // array empties (the entry carrying the heap pointer becomes
+        // unreachable), save-side the persisted head is the legitimate
+        // one instead of a mirror.  Idempotent: on a run that never
+        // armed the endpoint this writes the pristine values over
+        // themselves.  A final commit persists the restored bytes.
         try {
             if (context.candidateHandle) {
                 const retireBuf = runtime.allocPage(0x1000);
-                for (let i = 0; i < 16; i++)
-                    runtime.write8(retireBuf + BigInt(i), 0x42n);
+                runtime.write64(retireBuf, 0n);
+                runtime.write64(retireBuf + 8n, 0x4000n);
                 runtime.ipcStorageWrite(
                     context.candidateHandle, 0n, retireBuf, 16);
 
@@ -571,7 +578,8 @@ export async function run() {
                     const commitReply = cmifSend(saveMount.handle,
                         {pkt, cmd: 10, input: [], rawWords: 8});
                     closeHandle(saveMount.handle);
-                    await khLog("RETIRE: cache alias neutralised " +
+                    await khLog("RETIRE: alias head restored to " +
+                        "canonical {0, 0x4000} " +
                         "tx=" + hex(commitReply.transport || 0) +
                         " rc=" + hex(commitReply.result || 0));
                 }
