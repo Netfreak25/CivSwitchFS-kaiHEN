@@ -133,6 +133,7 @@ function parseArgs(args) {
         // root cause open).
         minifyPayload: false,
         chain: false,
+        split: false,
         payloadModeSpecified: false
     };
     for (let index = 0; index < args.length; index++) {
@@ -164,6 +165,12 @@ function parseArgs(args) {
             options.chain = true;
             continue;
         }
+        if (arg === "--split") {
+            // Split chain: the save carries only the promotion; the
+            // kaiHEN bundle loads from /kaihen/payload.js on SD.
+            options.split = true;
+            continue;
+        }
         if (arg === "--port" || arg === "--bootstrap" || arg === "--template") {
             const value = args[++index];
             if (!value) throw new Error(`Missing value for ${arg}`);
@@ -175,9 +182,11 @@ function parseArgs(args) {
     }
     if (positional.length !== 1) {
         throw new Error("Usage: npm run persist:install -- <IP_SWITCH> " +
-            "[--port 9026] [--no-build] [--debug-payload] [--chain] " +
+            "[--port 9026] [--no-build] [--debug-payload] [--chain|--split] " +
             "[--minify-payload] [--bootstrap path] [--template path]");
     }
+    if (options.chain && options.split)
+        throw new Error("Choose either --chain (embedded) or --split (SD-loaded)");
     if (!Number.isInteger(options.port) || options.port < 1 || options.port > 65535)
         throw new Error("Port invalide");
     if (options.debugPayload && options.minifyPayload)
@@ -195,7 +204,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
             await buildPersistentImage({
                 debugPayload: options.debugPayload,
                 minifyPayload: options.minifyPayload,
-                chain: options.chain
+                chain: options.chain,
+                split: options.split
             });
         }
         await install(options.host, options.port, options.bootstrap, options.template);

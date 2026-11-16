@@ -5,3 +5,6 @@ npm-debug.log*
 
 # Generated compression output
 *.hex
+
+# Launcher-generated kaiHEN payload (part 2 of the split chain)
+.build/

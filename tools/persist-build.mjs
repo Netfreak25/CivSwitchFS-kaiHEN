@@ -55,8 +55,9 @@ export async function buildPersistentImage(options = {}) {
 
     const [payload, visualPrelude] = await Promise.all([
         buildPayload({
-            entry: options.chain ?
-                path.join(ROOT, "src/chain.mjs") : undefined,
+            entry: options.chain ? path.join(ROOT, "src/chain.mjs")
+                : options.split ? path.join(ROOT, "src/chain-sd.mjs")
+                : undefined,
             debug: debugPayload,
             minifyIdentifiers: minifyPayload
         }),
@@ -95,11 +96,12 @@ export async function buildPersistentImage(options = {}) {
     const image = {
         profile: PROFILE,
         version: "civswitchfs-" + JSON.parse(packageJson).version +
-            (options.chain ? "+kaihen" : ""),
+            (options.chain ? "+kaihen" : options.split ? "+kaihen-sd" : ""),
         stage,
         bytes: stageBytes.length,
         sha256: sha256(stageBytes),
         chain: options.chain === true,
+        split: options.split === true,
         triggerTiming: false,
         hideTriggerText: !options.showText,
         debugPayload,
@@ -281,12 +283,17 @@ function readOptions(args) {
         // Readable build is the default: the minified chain stage fails to
         // eval in the save path ("Unexpected identifier", root cause open).
         minifyPayload: false,
-        chain: false
+        chain: false,
+        split: false
     };
     for (let index = 0; index < args.length; index++) {
         const arg = args[index];
         if (arg === "--chain") {
             options.chain = true;
+            continue;
+        }
+        if (arg === "--split") {
+            options.split = true;
             continue;
         }
         if (arg === "--show-text") {
@@ -325,7 +332,10 @@ function readOptions(args) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
     try {
-        await buildPersistentImage(readOptions(process.argv.slice(2)));
+        const options = readOptions(process.argv.slice(2));
+        if (options.chain && options.split)
+            throw new Error("Choose either --chain (embedded) or --split (SD-loaded)");
+        await buildPersistentImage(options);
     } catch (error) {
         console.error("Persistence build failed: " + error.message);
         process.exitCode = 1;
