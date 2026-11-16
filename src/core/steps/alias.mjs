@@ -1,5 +1,5 @@
 import coreRuntime, {waitMs} from "../runtime.mjs";
-import {emitFastStage, emitVerboseStage, isVerboseLogging} from "../log-stage.mjs";
+import {emitVerboseStage, isVerboseLogging} from "../log-stage.mjs";
 
 const {
   GADGET_MEMSET,
@@ -261,11 +261,6 @@ export async function installCacheAlias({
                     !stoppedByUser && !shouldStop?.(); ca++) {
                     stepAttempts++;
 
-// Diagnostic phase markers (2026-11-14): the last marker on screen identifies
-// which await never returned when a wave wedges the game. Routed through
-// emitFastStage so the stage-only log policy lets them through (raw log()
-// calls are filtered unless verbose). No logic changes.
-                    await emitFastStage("AW1 s" + stepIdx + " b" + batch + " a" + ca);
                     if (!writeDirtyData(savedHandle, dirtyFilePath, config.DIRTY_FILE_SIZE,
                             dirtyWriteBuf, dirtyWritePkt)) {
                         stepHardFailure = "dirty-write-failed";
@@ -273,7 +268,6 @@ export async function installCacheAlias({
                         await log("FAIL: step " + stepIdx + " dirty write");
                         allStepsOk = false; break;
                     }
-                    await emitFastStage("AW2 s" + stepIdx + " b" + batch + " a" + ca);
 
                     resetWaveState(waveData.frames, waveData.backups, REQ,
                         waveData.pktBackups, gates, waveExtra);
@@ -292,7 +286,6 @@ export async function installCacheAlias({
                         await log("FAIL: step " + stepIdx + " reservation");
                         allStepsOk = false; break;
                     }
-                    await emitFastStage("AW3 s" + stepIdx + " b" + batch + " a" + ca);
 
                     prepPacket(REQ[9], 4, 8, []);
                     write8(REQ[9] + 0x10n, 2n);
@@ -308,8 +301,6 @@ export async function installCacheAlias({
 
                     var wave = executeWave(waveData.frames, rawScheduling,
                         workerResources, gates, sendIndices);
-                    await emitFastStage("AW4 s" + stepIdx + " b" + batch + " a" + ca +
-                        " started=" + wave.started + " joined=" + wave.joined);
                     wavesStarted += wave.started === 13 ? 1 : 0;
 
                     if (wave.created < 13 || wave.started < 13) {
