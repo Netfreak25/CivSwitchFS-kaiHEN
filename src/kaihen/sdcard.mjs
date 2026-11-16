@@ -156,6 +156,55 @@ export function sdCommit(context, sd) {
     return true;
 }
 
+// -- Directory listing ----------------------------------------------------------
+
+// FsDirectoryEntry: name[0x301]+pad[3], type s8 @0x304 (0=dir, 1=file),
+// pad2[3], size s64 @0x308. Stride 0x310 (Atmosphere fs_directory.hpp).
+const DIR_ENTRY_STRIDE = 0x310;
+
+// IFileSystem::OpenDirectory (cmd 9). mode bits: 1=read files,
+// 2=read dirs, 3=both.
+export function sdOpenDirectory(context, sd, path, mode) {
+    const reply = pathPacket(context, sd, 9, path, [mode & 0xff, 0, 0, 0]);
+    check(reply.transport === 0 && reply.result === 0 &&
+        reply.moves.length === 1,
+        "open dir " + path + " failed: transport=" + hex(reply.transport) +
+        " result=" + hex(reply.result));
+    return reply.moves[0];
+}
+
+// IDirectory::Read (cmd 0): up to maxEntries FsDirectoryEntry structs into
+// the arena data buffer; out count u64 sits in the static reply words.
+export function sdReadDirectory(context, handle, maxEntries) {
+    const slots = arenaSlots(context);
+    const capacity = DIR_ENTRY_STRIDE * maxEntries;
+    const reply = cmifSend(handle, {
+        pkt: slots.pkt, cmd: 0,
+        input: u64Bytes(BigInt(maxEntries)),
+        b: [{addr: slots.data, size: capacity}]
+    });
+    requireOk(reply, "dir read");
+    const count = Number(readU64LE(
+        readNative(slots.pkt + BigInt(reply.dataAt), 8), 0));
+    check(count >= 0 && count <= maxEntries, "dir read count " + count);
+    if (!count) return [];
+    const raw = readNative(slots.data, DIR_ENTRY_STRIDE * count);
+    const entries = [];
+    for (let i = 0; i < count; i++) {
+        const at = i * DIR_ENTRY_STRIDE;
+        let name = "";
+        for (let k = 0; k < 0x300; k++) {
+            const c = raw[at + k];
+            if (c === 0) break;
+            name += String.fromCharCode(c);
+        }
+        entries.push({name,
+            isDir: raw[at + 0x304] === 0,
+            size: Number(readU64LE(raw.subarray(at + 0x308, at + 0x310), 0))});
+    }
+    return entries;
+}
+
 // -- Full-file operations ------------------------------------------------------
 
 // Read an entire SD file (bounded) for on-console use (bootstrap, donor).

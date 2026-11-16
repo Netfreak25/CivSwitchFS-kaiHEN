@@ -8,3 +8,6 @@ npm-debug.log*
 
 # Launcher-generated kaiHEN payload (part 2 of the split chain)
 .build/
+
+# Logs
+logs/

