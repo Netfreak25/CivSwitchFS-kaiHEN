@@ -5,8 +5,20 @@ const {
   hex32,
   ipcCommitChecked,
   ipcDeleteDirectoryRecursivelyChecked,
+  ipcDeleteFileChecked,
+  ipcGetEntryTypeChecked,
   log
 } = coreRuntime;
+
+// kaiHEN donor leftovers at the root of the game's save: /main (the RO
+// image) and /main.npdm (the captured policy), written by the donor
+// stage of the kaiHEN chain. A run that dies between donor and
+// donor-cleanup leaves them behind; they are reused or replaced by the
+// next donor stage, but only the kaiHEN side would remove them. Wiping
+// them here means CivSwitchFS's own cleanup — which runs every boot,
+// promotion-only or chained — starts every kaiHEN run from a clean
+// donor root.
+const DONOR_LEFTOVER_FILES = ["/main", "/main.npdm"];
 
 // ── Cleanup and retirement (S19–S21) ────────────────────────────────────────
 
@@ -158,6 +170,7 @@ export async function cleanupScratchAndHandles({
     var cleanupRemoveResult = null;
     var cleanupCommitTransport = null;
     var cleanupCommitResult = null;
+    var cleanupDonorWiped = 0;
     var cleanupHandlesClosed = 0;
     var cleanupExpectedHandles = 0;
     var cleanupCloseFailures = [];
@@ -189,6 +202,28 @@ export async function cleanupScratchAndHandles({
         countExpectedHandle(rootSession);
         cleanupAttempted = true;
         await log("CLEANUP: removing " + SCRATCH_DIR + " and committing");
+        // Donor leftovers ride the same commit: absent files are skipped
+        // silently (the common case), and a present file that fails to
+        // delete is a real cleanup failure — it feeds cleanupErrors and
+        // fails verification below.
+        for (var di = 0; di < DONOR_LEFTOVER_FILES.length; di++) {
+            var donorFile = DONOR_LEFTOVER_FILES[di];
+            try {
+                var donorEntry = ipcGetEntryTypeChecked(savedHandle, donorFile);
+                if (donorEntry.transport !== 0 || donorEntry.result !== 0)
+                    continue;
+                var donorDelete = ipcDeleteFileChecked(savedHandle, donorFile);
+                if (donorDelete.transport === 0 && donorDelete.result === 0) {
+                    cleanupDonorWiped++;
+                    continue;
+                }
+                cleanupErrors.push("donor-" + donorFile + "-delete=" +
+                    (donorDelete.transport !== 0
+                        ? hex32(donorDelete.transport) : hex32(donorDelete.result)));
+            } catch (donorError) {
+                cleanupErrors.push("donor-" + donorFile + "=" + String(donorError));
+            }
+        }
         try {
             var deleteStatus = ipcDeleteDirectoryRecursivelyChecked(
                 savedHandle, SCRATCH_DIR);
@@ -249,6 +284,7 @@ export async function cleanupScratchAndHandles({
         await log("CLEANUP: " + SCRATCH_DIR +
             " deleteTx=" + cleanupDeleteTxText + " delete=" + cleanupDeleteText +
             " commitTx=" + cleanupCommitTxText + " commit=" + cleanupCommitText +
+            " donorWiped=" + cleanupDonorWiped +
             " handlesClosed=" + cleanupHandlesClosed +
             "/" + cleanupExpectedHandles +
             " closeErrors=" + (cleanupCloseFailures.join(",") || "none") +
@@ -275,6 +311,7 @@ export async function cleanupScratchAndHandles({
         deleteResult: cleanupRemoveResult,
         commitTransport: cleanupCommitTransport,
         commitResult: cleanupCommitResult,
+        donorFilesWiped: cleanupDonorWiped,
         handlesClosed: cleanupHandlesClosed,
         expectedHandles: cleanupExpectedHandles,
         closeErrors: cleanupCloseFailures,
