@@ -14,12 +14,13 @@
 // (default "/").
 
 import coreRuntime from "../src/core/runtime.mjs";
+import {cmifSend} from "../src/kaihen/wire.mjs";
+import {u64Bytes} from "../src/kaihen/state.mjs";
 import {sha256} from "../src/kaihen/sha256.mjs";
 
 const {
-  allocPage, cmifReply, closeHandle, ipcGetEntryTypeChecked, ipcReadFileChecked,
-  openMount, prepPacket, read32, read64, read8, sendIPC, write32, write64,
-  writeStr, writeXDesc
+  allocPage, closeHandle, ipcGetEntryTypeChecked, ipcReadFileChecked,
+  openMount, read64, read8, writeStr
 } = coreRuntime;
 
 // Known artifacts and their expectation. /main is the donor RO image
@@ -40,70 +41,58 @@ const WALK_DEPTH = 6;
 function shortSha(digest) { return digest.slice(0, 12); }
 
 // -- Directory IPC against an IFileSystem handle ---------------------------
-// (fs/filesystem.js has no directory-read helper yet; these mirror its
-// packet style. FsDirectoryEntry: name[0x301], type u8 @0x304, size
-// u64 @0x308, stride 0x310 — Atmosphere fs_directory.hpp.)
+// Built with the kaiHEN wire builder (proven X/B descriptor encoding and
+// the automatic bare svc#0x22 fallback: the SDK dispatcher gadget rejects
+// some shapes with the bogus non-Result word 0x25A0B — the hand-rolled
+// packets hit exactly that). FsDirectoryEntry: name[0x301], type u8
+// @0x304, size u64 @0x308, stride 0x310 (Atmosphere fs_directory.hpp).
 
-function saveOpenDirectory(handle, path, mode) {
+function saveOpenDirectory(save, path, mode) {
     const pathBuf = allocPage(0x1000);
     writeStr(pathBuf, path);
     const pkt = allocPage(0x2000);
-    // Shape mirrored from ipcOpenFile (filesystem.js): X desc + one
-    // input dword (the FsDirOpenMode) after the command.
-    prepPacket(pkt, (4 | (1 << 16)) >>> 0, 9, []);
-    writeXDesc(pkt, 8, pathBuf, path.length + 1);
-    write32(pkt + 0x10n, 0x49434653n);
-    write32(pkt + 0x18n, 9n);
-    write32(pkt + 0x20n, mode & 0xff);
-    const transport = Number(sendIPC(handle, pkt)) >>> 0;
-    if (transport !== 0) throw Error("OpenDirectory " + path +
-        ": transport " + transport);
-    const reply = cmifReply(pkt);
-    if (reply.result !== 0) throw Error("OpenDirectory " + path +
-        ": result " + reply.result);
-    const moved = reply.moves && reply.moves.length ? reply.moves[0] : 0;
-    if (!moved) throw Error("OpenDirectory " + path + ": no handle moved");
-    return moved;
+    const reply = cmifSend(save, {
+        pkt, cmd: 9,
+        x: [{addr: pathBuf, size: path.length + 1}],
+        input: [mode & 0xff, 0, 0, 0]
+    });
+    if (reply.transport !== 0 || reply.result !== 0 ||
+        !reply.moves || !reply.moves.length)
+        throw Error("OpenDirectory " + path + " failed: transport=" +
+            reply.transport + " result=" + reply.result);
+    return reply.moves[0];
 }
 
 function saveReadDirectory(dirHandle, maxEntries) {
     const buf = allocPage(0x310 * maxEntries);
     const pkt = allocPage(0x2000);
-    // Shape mirrored from ipcReadFileChecked: one B (map-alias,
-    // non-secure) descriptor, SFCI header at 0x20, input u64 at 0x30.
+    // Same shape as the proven IFile::Read (sdReadFileChunk): u64
+    // input, one B map-alias buffer, static out = u64 count.
     const entryBytes = 0x310 * maxEntries;
-    prepPacket(pkt, (4 | (1 << 24)) >>> 0, 0x10, []);
-    const addrLow = Number(buf & 0xFFFFFFFFn);
-    const bWord2 = 1 |
-        (Number((buf >> 36n) & 0x7n) << 2) |
-        (Number((BigInt(entryBytes) >> 32n) & 0xFn) << 24) |
-        (Number((buf >> 32n) & 0xFn) << 28);
-    write32(pkt + 0x08n, BigInt(entryBytes));
-    write32(pkt + 0x0Cn, BigInt(addrLow >>> 0));
-    write32(pkt + 0x10n, BigInt(bWord2 >>> 0));
-    write32(pkt + 0x20n, 0x49434653n);
-    write32(pkt + 0x28n, 0n);
-    write64(pkt + 0x30n, BigInt(maxEntries));
-    const transport = Number(sendIPC(dirHandle, pkt)) >>> 0;
-    if (transport !== 0) throw Error("IDirectory::Read transport " + transport);
-    const reply = cmifReply(pkt);
-    if (reply.result !== 0) throw Error("IDirectory::Read result " +
-        reply.result);
-    const count = Number(read64(pkt + BigInt(reply.data)));
+    const reply = cmifSend(dirHandle, {
+        pkt, cmd: 0,
+        input: u64Bytes(BigInt(maxEntries)),
+        b: [{addr: buf, size: entryBytes}]
+    });
+    if (reply.transport !== 0 || reply.result === undefined ||
+        reply.result !== 0)
+        throw Error("IDirectory::Read failed: transport=" + reply.transport +
+            " result=" + reply.result);
+    const count = Number(read64(pkt + BigInt(reply.dataAt)));
     if (!(count >= 0 && count <= maxEntries))
         throw Error("IDirectory::Read count " + count);
     const out = [];
     for (let i = 0; i < count; i++) {
-        const at = BigInt(i * 0x310);
+        const base = buf + BigInt(i * 0x310);
         let name = "";
         for (let k = 0; k < 0x300; k++) {
-            const c = Number(read8(buf + at + BigInt(k))) & 0xff;
+            const c = Number(read8(base + BigInt(k))) & 0xff;
             if (c === 0) break;
             name += String.fromCharCode(c);
         }
         out.push({name,
-            isDir: (Number(read32(buf + at + 0x304n)) & 0xff) === 0,
-            size: Number(read64(buf + at + 0x308n))});
+            isDir: (Number(read8(base + 0x304n)) & 0xff) === 0,
+            size: Number(read64(base + 0x308n))});
     }
     return out;
 }
@@ -142,6 +131,9 @@ export async function run() {
             const dirHandle = saveOpenDirectory(save, path, 3);
             let entries;
             try {
+                // IDirectory::Read keeps a server-side cursor: loop until
+                // a short batch so directories with more than DIR_BATCH
+                // entries are not silently truncated.
                 entries = [];
                 for (;;) {
                     const batch = saveReadDirectory(dirHandle, DIR_BATCH);
@@ -165,7 +157,8 @@ export async function run() {
                     totalBytes += e.size;
                     let verdict = "";
                     if (child === "/main" && e.size <= HASH_LIMIT) {
-                        const read = ipcReadFileChecked(save, child, HASH_LIMIT);
+                        const read = ipcReadFileChecked(save, child,
+                            HASH_LIMIT);
                         if (read.ok) {
                             const digest = sha256(read.bytes);
                             const sizeOk = e.size === DONOR_MAIN_SIZE;
