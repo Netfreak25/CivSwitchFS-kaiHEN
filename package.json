@@ -13,6 +13,7 @@
     "send": "node tools/send.mjs",
     "send:chain": "node tools/send.mjs --entry src/chain.mjs",
     "check": "node tools/check.mjs",
+    "savetree": "node tools/savetree.mjs",
     "example:user-storage": "node tools/send.mjs --entry examples/user-storage.mjs"
   },
   "devDependencies": {
