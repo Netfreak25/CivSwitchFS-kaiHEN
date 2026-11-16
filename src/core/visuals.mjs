@@ -41,6 +41,25 @@ function installVisualLogPatchFor(api) {
     globalThis[LOGGER_STATE_KEY] = state;
     let originalLog = api.log;
 
+    // The applet presents frames between macrotasks: raw log() bursts
+    // (no per-line pause like emitStage's 30 ms) append DOM rows that
+    // never paint — a whole payload stage can run invisible (vsdump
+    // 2026-11-16). Yield a frame every few rows so unpaced callers stay
+    // visible too.
+    const YIELD_EVERY_ROWS = 4;
+    let rowsSinceYield = 0;
+    function yieldFrame() {
+        return new Promise(resolve => {
+            const w = globalThis.window;
+            if (w && typeof w.requestAnimationFrame === "function")
+                w.requestAnimationFrame(() => resolve());
+            else if (typeof globalThis.setTimeout === "function")
+                globalThis.setTimeout(resolve, 16);
+            else
+                resolve();
+        });
+    }
+
     function ensureOutput() {
         const nativeOutput = document.querySelector("pre");
         if (nativeOutput && nativeOutput !== state.output)
@@ -56,7 +75,7 @@ function installVisualLogPatchFor(api) {
         return state.output;
     }
 
-    const visualLog = function (...args) {
+    const visualLog = async function (...args) {
         const callThis = this;
         const callArgs = args.slice();
         const message = String(callArgs[0]);
@@ -80,9 +99,18 @@ function installVisualLogPatchFor(api) {
 
         const followTail = isNearBottom(state.output);
         const logOutput = ensureOutput();
+        const firstNewRow = logOutput.childElementCount;
         addLogRows(logOutput, document, message, timestamp, state.compact);
         if (followTail) logOutput.scrollTop = logOutput.scrollHeight;
-        return Promise.resolve(initialLogResult);
+        const addedRows = logOutput.childElementCount - firstNewRow;
+        rowsSinceYield += addedRows > 0 ? addedRows : 1;
+        if (rowsSinceYield >= YIELD_EVERY_ROWS) {
+            rowsSinceYield = 0;
+            await yieldFrame();
+            if (followTail && state.output)
+                state.output.scrollTop = state.output.scrollHeight;
+        }
+        return initialLogResult;
     };
 
     globalThis[LOGGER_KEY] = visualLog;
