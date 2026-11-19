@@ -5,7 +5,7 @@
  * beginning of each filesystem attempt, before its race wave starts.
  * Rendering has no timer, animation, or per-log path during a race.
  */
-const UI_BUILD_VERSION = "0.0.2";
+const UI_BUILD_VERSION = "0.0.3";
 
 export function createLocalHackUI(uiVersion, uiBuildId) {
     "use strict";
@@ -218,7 +218,7 @@ export function createLocalHackUI(uiVersion, uiBuildId) {
             position: absolute !important; right: 50px !important;
             top: 654px !important; color: #90989b !important;
             display: flex !important; align-items: center !important;
-            gap: 10px !important; font-size: 20px !important;
+            font-size: 20px !important;
             line-height: 34px !important;
         }
         #fs-kaihen-status .kh-keycap {
@@ -230,7 +230,13 @@ export function createLocalHackUI(uiVersion, uiBuildId) {
             line-height: 1 !important; font-weight: 600 !important;
         }
         #fs-kaihen-status .kh-keycap-minus {
-            font-size: 22px !important; padding-bottom: 2px !important;
+            font-size: 22px !important;
+        }
+        #fs-kaihen-status .kh-keycap-minus .kh-keycap-mark {
+            position: relative !important; top: 2px !important;
+        }
+        #fs-kaihen-status .kh-key-label {
+            margin-left: 10px !important;
         }
         #fs-kaihen-status .kh-start,
         #fs-kaihen-status .kh-retry {
@@ -240,7 +246,7 @@ export function createLocalHackUI(uiVersion, uiBuildId) {
             background: #20252a !important; color: #ece9e2 !important;
             border-radius: 4px !important; text-align: center !important;
             align-items: center !important; justify-content: center !important;
-            gap: 12px !important; font-size: 21px !important;
+            font-size: 21px !important;
             line-height: 52px !important;
             pointer-events: auto !important; left: 500px !important;
         }
@@ -286,12 +292,14 @@ export function createLocalHackUI(uiVersion, uiBuildId) {
         #fs-kaihen-status .kh-log-hint {
             position: absolute !important; top: 676px !important;
             left: 24px !important; display: flex !important;
-            align-items: center !important; gap: 14px !important;
+            align-items: center !important;
             font-size: 18px !important;
         }
         #fs-kaihen-status .kh-log-action {
             display: inline-flex !important; align-items: center !important;
-            gap: 8px !important;
+        }
+        #fs-kaihen-status .kh-log-divider {
+            margin: 0 14px !important;
         }
         #fs-kaihen-status:not([data-mode="intro"]) .kh-log-start,
         #fs-kaihen-status:not([data-mode="intro"]) .kh-log-divider {
@@ -312,7 +320,10 @@ export function createLocalHackUI(uiVersion, uiBuildId) {
     function addKeyLabel(parent, key, label) {
         const glyph = document.createElement("span");
         glyph.className = "kh-keycap" + (key === "−" ? " kh-keycap-minus" : "");
-        glyph.textContent = key;
+        const mark = document.createElement("span");
+        mark.className = "kh-keycap-mark";
+        mark.textContent = key;
+        glyph.appendChild(mark);
         parent.appendChild(glyph);
         const caption = document.createElement("span");
         caption.className = "kh-key-label";
