@@ -49,7 +49,9 @@ export function createChainStatus(buttonReaderFactory = createCardButtons) {
         waitForStart: () => Promise.resolve(),
         beginRun() {}, phase() {},
         finish: () => ({kind: "unconfirmed"}),
-        waitForRetry: () => Promise.resolve(false)
+        waitForRetry: () => Promise.resolve(false),
+        recordError() {},
+        holdTerminal: () => Promise.resolve()
     };
 
     const messages = [];
@@ -176,6 +178,19 @@ export function createChainStatus(buttonReaderFactory = createCardButtons) {
                 }
             });
             return retryPromise;
+        },
+        recordError(error) {
+            safePresentation(() => {
+                observe("PAYLOAD ERROR: " + String(error?.message || error));
+                if (error?.stack)
+                    observe(String(error.stack).split("\n").slice(0, 3).join(" | "));
+                ui.refreshLogs();
+            });
+        },
+        holdTerminal() {
+            // Gobanos keeps its eval pending to retain terminal input. The
+            // loader may otherwise leave a visible DOM with inactive HID polling.
+            return new Promise(() => {});
         }
     };
 }

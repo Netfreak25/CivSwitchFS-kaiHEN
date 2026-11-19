@@ -5,7 +5,7 @@
  * beginning of each filesystem attempt, before its race wave starts.
  * Rendering has no timer, animation, or per-log path during a race.
  */
-const UI_BUILD_VERSION = "0.0.3";
+const UI_BUILD_VERSION = "0.0.4";
 
 export function createLocalHackUI(uiVersion, uiBuildId) {
     "use strict";

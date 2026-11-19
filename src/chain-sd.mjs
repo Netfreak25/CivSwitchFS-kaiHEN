@@ -40,6 +40,8 @@ export async function run() {
     while (true) {
         status.beginRun(++runNumber);
         status.phase("fs");
+        let failed = false;
+        let failure;
         try {
             await runPromotion();
 
@@ -75,11 +77,24 @@ export async function run() {
                 const result = eval(bytesToSource(payload.bytes));
                 if (result && typeof result.then === "function") await result;
             }
+        } catch (error) {
+            failed = true;
+            failure = error;
+            status.recordError(error);
         } finally {
             status.finish();
         }
 
+        if (failed) {
+            // Keep the native input reader alive with the terminal screen.
+            await status.holdTerminal();
+            throw failure;
+        }
+
         // No retry is offered after HEN or an outcome without complete FS evidence.
-        if (!await status.waitForRetry()) return;
+        if (!await status.waitForRetry()) {
+            await status.holdTerminal();
+            return;
+        }
     }
 }
